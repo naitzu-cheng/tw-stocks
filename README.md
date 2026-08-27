@@ -82,6 +82,19 @@ These are historical experiments, not investment advice. The model is not a
 trading recommendation, and this project still needs stronger validation before
 real-money use.
 
+Deploy on Render
+
+1. Push this repository to GitHub.
+2. Sign in to Render and choose `New` -> `Blueprint`.
+3. Select `naitzu-cheng/tw-stocks` and deploy `render.yaml`.
+4. Render builds with `pip install -r requirements.txt` and starts the app with
+	Uvicorn. Open the generated `onrender.com` URL and add `/dashboard`.
+
+The current deployment uses SQLite. The free service filesystem is not a durable
+database, so a restart can remove the local cache; the Dashboard refreshes one
+year of data when it loads. Use PostgreSQL or a persistent disk before treating
+this as a long-term data service.
+
 Notes
 
 - Database file `stocks.db` will be created in the project root when collecting data.
