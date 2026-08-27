@@ -2,5 +2,8 @@ fastapi
 uvicorn[standard]
 pandas
 yfinance
+# multitasking 0.0.12 uses Python 3.9+ type syntax; this project currently runs on Python 3.8.
+multitasking==0.0.11
 plotly
 sqlalchemy
+scikit-learn
