@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% set active = 'dashboard' %}
+{% block title %}{{ symbol }} 量化研究室{% endblock %}
+{% block body %}
+<header>
+  <h1>{{ symbol }} 量化研究室</h1>
+  <span class="badge">{{ profile.label }} · {{ profile.currency }}</span>
+  <small>最新收盤 {{ latest_close|num }}（{{ latest_date }}）｜回測期間 {{ m.start }} 至 {{ m.end }}，{{ m.observations }} 個交易日｜基準 {{ profile.benchmark }}</small>
+</header>
+{% if refresh_error %}<div class="note warn">{{ refresh_error }}</div>{% endif %}
+
+<form class="controls" method="get">
+  <fieldset><legend>標的</legend>
+    <label>股票代號<input name="symbol" value="{{ symbol }}" placeholder="2330 / AAPL"></label>
+  </fieldset>
+  <fieldset><legend>均線策略</legend>
+    <label>短均線<input type="number" name="fast_window" value="{{ params.fast_window }}" min="2"></label>
+    <label>長均線<input type="number" name="slow_window" value="{{ params.slow_window }}" min="3"></label>
+  </fieldset>
+  <fieldset><legend>交易成本（空白 = 依市場自動）</legend>
+    <label>手續費率<input type="number" name="fee_rate" value="{{ params.fee_rate if params.fee_rate is not none }}" placeholder="{{ profile.fee_rate }}" step="any" min="0"></label>
+    <label>賣出稅率<input type="number" name="tax_rate" value="{{ params.tax_rate if params.tax_rate is not none }}" placeholder="{{ profile.tax_rate }}" step="any" min="0"></label>
+    <label>滑價率<input type="number" name="slippage_rate" value="{{ params.slippage_rate if params.slippage_rate is not none }}" placeholder="{{ profile.slippage_rate }}" step="any" min="0"></label>
+  </fieldset>
+  <fieldset><legend>機器學習</legend>
+    <label>模型<select name="model_name">{% for k, v in models.items() %}<option value="{{ k }}" {{ 'selected' if k == params.model_name }}>{{ v }}</option>{% endfor %}</select></label>
+    <label>預測天數<input type="number" name="horizon" value="{{ params.horizon }}" min="1" max="60"></label>
+    <label>重新訓練間隔<input type="number" name="step" value="{{ params.step }}" min="5"></label>
+    <label class="check"><input type="checkbox" name="compare" value="true" {{ 'checked' if params.compare }}>比較三個模型（較慢）</label>
+  </fieldset>
+  <button type="submit">更新研究</button>
+</form>
+
+<div class="tabs">
+  <button class="tab active" data-tab="overview">研究總覽</button>
+  <button class="tab" data-tab="candles">K 線與指標</button>
+  <button class="tab" data-tab="strategy">均線回測</button>
+  <button class="tab" data-tab="robust">參數穩健度</button>
+  <button class="tab" data-tab="model">機器學習（Walk-forward）</button>
+</div>
+
+<div id="overview" class="content active">
+  <div class="panel">
+    <h2>重點摘要</h2>
+    <table class="t">
+      <tr><th></th><th>均線策略 {{ params.fast_window }}/{{ params.slow_window }}</th><th>買入持有</th>{% if ml %}<th>{{ ml.model_name }}（樣本外）</th>{% endif %}</tr>
+      {% set mlS = ml.strategy if ml else none %}
+      {% for key, label, fmt in [('total_return','總報酬','pct'),('cagr','年化報酬 CAGR','pct'),('annual_volatility','年化波動','pct'),('sharpe','Sharpe','num'),('sortino','Sortino','num'),('max_drawdown','最大回撤','pct'),('calmar','Calmar','num'),('psr','PSR（Sharpe > 0 的機率）','pct'),('beta','Beta（對大盤）','num'),('alpha','年化 Alpha','pct')] %}
+      <tr><td>{{ label }}</td>
+        {% for src in [m, m.buy_hold] + ([mlS] if mlS else []) %}
+        <td>{% if src.get(key) is none %}—{% elif fmt == 'pct' %}{{ src[key]|pct }}{% else %}{{ src[key]|num }}{% endif %}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </table>
+    {% if ml %}<p class="hint">機器學習欄位只涵蓋樣本外期間 {{ ml.oos_start }} 至 {{ ml.oos_end }}，與前兩欄期間不同，比較時請看「機器學習」分頁內同期間的買入持有。</p>{% endif %}
+  </div>
+  <div class="panel">
+    <h2>怎麼解讀？</h2>
+    <p><b>Sharpe</b> 是每單位波動換到的報酬；<b>PSR</b> 考慮了樣本長度與肥尾，告訴你「這個 Sharpe 是真的大於 0」的機率，低於 95% 時別太當真。
+    <b>Calmar</b> = 年化報酬 / 最大回撤，衡量「痛苦值不值得」。<b>Beta / Alpha</b> 是相對 {{ profile.benchmark }} 的表現，Alpha 才是策略本身的貢獻。</p>
+    <p>詳細說明、何時容易過擬合、各方法適用時機，請看 <a href="/guide">分析方法教學</a>。</p>
+  </div>
+</div>
+
+<div id="candles" class="content"><div class="chart">{{ charts.price|safe }}</div>
+  <p class="hint">台股慣例紅漲綠跌；▲ 為均線策略買進點、▼ 為賣出點。下方依序為成交量與 RSI(14)（70 以上偏熱、30 以下偏冷）。</p></div>
+
+<div id="strategy" class="content">
+  <div class="cards">
+    <div class="card"><span>策略總報酬</span><strong>{{ m.total_return|pct }}</strong><small>持有 {{ m.buy_hold.total_return|pct }}</small></div>
+    <div class="card"><span>Sharpe</span><strong>{{ m.sharpe|num }}</strong><small>持有 {{ m.buy_hold.sharpe|num }}</small></div>
+    <div class="card"><span>最大回撤</span><strong>{{ m.max_drawdown|pct }}</strong><small>持有 {{ m.buy_hold.max_drawdown|pct }}</small></div>
+    <div class="card"><span>持倉比例</span><strong>{{ m.exposure|pct }}</strong><small>交易 {{ m.trades }} 次</small></div>
+    <div class="card"><span>勝率（持倉日）</span><strong>{{ m.win_rate|pct }}</strong><small>獲利因子 {{ m.profit_factor|num }}</small></div>
+    <div class="card"><span>累計交易成本</span><strong>{{ m.total_cost|pct(2) }}</strong><small>來回一次 {{ costs.round_trip|pct(3) }}</small></div>
+  </div>
+  <div class="chart">{{ charts.strategy|safe }}</div>
+  <div class="panel"><h3>交易紀錄（訊號日收盤價）</h3>
+    <div class="scroll"><table class="t"><tr><th>日期</th><th>動作</th><th>價格</th></tr>
+    {% for t in m.trade_log|reverse %}<tr><td>{{ t.date }}</td><td class="{{ 'buy' if t.action == '買入' else 'sell' }}">{{ t.action }}</td><td>{{ t.price|num }}</td></tr>{% endfor %}
+    </table></div></div>
+</div>
+
+<div id="robust" class="content">
+  {% if robust %}
+  <div class="panel">
+    <h2>你的參數是真的好，還是剛好？</h2>
+    <p class="hint">把資料切成「樣本內」（{{ robust.split_date }} 之前）與「樣本外」（之後）。在樣本內測試 {{ robust.n_trials }} 組均線參數，挑出最好的，再看它在沒看過的樣本外表現如何。</p>
+    <div class="cards">
+      <div class="card"><span>樣本內最佳參數</span><strong>{{ robust.best_in_sample.fast }}/{{ robust.best_in_sample.slow }}</strong><small>樣本內 Sharpe {{ robust.best_in_sample.sharpe_in|num }}</small></div>
+      <div class="card"><span>它在樣本外的 Sharpe</span><strong>{{ robust.best_in_sample.sharpe_out|num }}</strong><small>衰退 {{ (robust.best_in_sample.sharpe_in - robust.best_in_sample.sharpe_out)|num }}</small></div>
+      <div class="card"><span>你的 {{ robust.chosen.fast }}/{{ robust.chosen.slow }}</span><strong>{{ robust.chosen.sharpe_out|num }}</strong><small>樣本外 Sharpe（樣本內 {{ robust.chosen.sharpe_in|num }}）</small></div>
+      <div class="card"><span>Deflated Sharpe</span><strong>{{ robust.chosen.deflated_sharpe|pct(0) }}</strong><small>扣掉「試了 {{ robust.n_trials }} 組」的運氣後</small></div>
+      <div class="card"><span>樣本內外排名相關</span><strong>{{ robust.in_out_correlation|num }}</strong><small>接近 0 或負 = 挑參數沒用</small></div>
+      <div class="card"><span>樣本外 Sharpe &gt; 0 的組合</span><strong>{{ robust.pct_positive_out|pct(0) }}</strong><small>越高代表策略本身穩健</small></div>
+    </div>
+    {% set decay = robust.best_in_sample.sharpe_in - robust.best_in_sample.sharpe_out %}
+    {% if decay > 0.5 or robust.in_out_correlation < 0.2 %}
+    <div class="note bad">樣本內最佳參數到了樣本外明顯退化（或樣本內外排名幾乎無關）：「最佳參數」多半是在擬合雜訊，不要只因為回測漂亮就採用。</div>
+    {% else %}
+    <div class="note good">樣本內表現好的參數在樣本外大致維持，參數選擇有一定穩健性（仍建議搭配更長資料驗證）。</div>
+    {% endif %}
+  </div>
+  <div class="chart">{{ charts.heatmap|safe }}</div>
+  <p class="hint">好的策略在熱力圖上會是「一整片」綠色高原；如果只有一格特別綠、旁邊都是紅的，那一格通常是運氣。</p>
+  {% else %}<div class="note warn">{{ errors.robust }}</div>{% endif %}
+</div>
+
+<div id="model" class="content">
+  {% if ml %}
+  <div class="panel">
+    <h2>{{ ml.model_name }}：預測 {{ ml.horizon }} 日後漲跌</h2>
+    <p class="hint">Walk-forward：每 {{ ml.step }} 個交易日用「當時以前」的資料重新訓練一次，共 {{ ml.n_folds }} 段，樣本外期間 {{ ml.oos_start }} 至 {{ ml.oos_end }}（{{ ml.test_observations }} 天）。
+      訓練與測試之間保留 {{ ml.horizon }} 天空窗避免標籤洩漏。進場門檻 = 訓練期上漲比例 ± {{ ml.band|pct(0) }}，也就是模型必須比「永遠看多」更有把握才進場。</p>
+    {% for level, text in ml.verdict %}<div class="note {{ level }}">{{ text }}</div>{% endfor %}
+    <div class="cards">
+      <div class="card"><span>樣本外準確率</span><strong>{{ ml.accuracy|pct }}</strong><small>基準 {{ ml.baseline_accuracy|pct }}</small></div>
+      <div class="card"><span>AUC</span><strong>{{ ml.auc|num }}</strong><small>0.5 = 丟銅板</small></div>
+      <div class="card"><span>訓練準確率</span><strong>{{ ml.train_accuracy|pct }}</strong><small>落差 {{ ml.overfit_gap|pct }}</small></div>
+      <div class="card"><span>p-value</span><strong>{{ ml.p_value|num(3) }}</strong><small>&lt; 0.05 才算顯著</small></div>
+      <div class="card"><span>策略 Sharpe</span><strong>{{ ml.strategy.sharpe|num }}</strong><small>同期持有 {{ ml.buy_hold.sharpe|num }}</small></div>
+      <div class="card"><span>策略報酬</span><strong>{{ ml.strategy.total_return|pct }}</strong><small>同期持有 {{ ml.buy_hold.total_return|pct }}</small></div>
+      <div class="card"><span>最大回撤</span><strong>{{ ml.strategy.max_drawdown|pct }}</strong><small>同期持有 {{ ml.buy_hold.max_drawdown|pct }}</small></div>
+      <div class="card"><span>持倉比例</span><strong>{{ ml.exposure|pct }}</strong><small>交易 {{ ml.trades }} 次</small></div>
+    </div>
+    <p><b>最新讀數（{{ ml.latest_date }}）</b>：{{ ml.latest_signal }}，模型估計 {{ ml.horizon }} 日後上漲機率 {{ ml.latest_probability|pct }}（門檻 {{ ml.latest_threshold|pct }}）。
+      <span class="hint">只有在上面的驗證結果顯著時，這個讀數才有參考價值。</span></p>
+  </div>
+  <div class="chart">{{ charts.model|safe }}</div>
+  <div class="grid2">
+    {% if ml.comparison|length > 1 %}
+    <div class="panel"><h3>模型比較（同一段樣本外）</h3>
+      <div class="scroll"><table class="t"><tr><th>模型</th><th>準確率</th><th>訓練</th><th>AUC</th><th>p</th><th>Sharpe</th><th>報酬</th></tr>
+      {% for k, c in ml.comparison.items() %}<tr class="{{ 'sel' if k == ml.model_key }}"><td>{{ c.label }}</td><td>{{ c.accuracy|pct }}</td><td>{{ c.train_accuracy|pct }}</td><td>{{ c.auc|num }}</td><td>{{ c.p_value|num(2) }}</td><td>{{ c.sharpe|num }}</td><td>{{ c.total_return|pct }}</td></tr>{% endfor %}
+      </table></div>
+      <p class="hint">「訓練」遠高於「準確率」的模型就是在背答案。複雜模型不一定比較好。</p></div>
+    {% endif %}
+    <div class="panel"><h3>最終模型最依賴的特徵</h3>
+      <table class="t">{% for f in ml.importance %}<tr><td>{{ f.feature }}</td><td style="width:45%"><div class="bar" style="width:{{ (f.weight * 250)|round(0) }}%;max-width:100%"></div></td><td>{{ f.weight|pct(0) }}</td></tr>{% endfor %}</table>
+      <p class="hint">特徵共 {{ ml.features|length }} 個：{{ ml.features|join('、') }}。重要度只代表模型「用了誰」，不代表因果。</p></div>
+  </div>
+  {% else %}<div class="note warn">{{ errors.ml }}</div>{% endif %}
+</div>
+
+<script>
+document.querySelectorAll('.tab').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    document.querySelectorAll('.content').forEach(function (c) { c.classList.remove('active'); });
+    document.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('active'); });
+    document.getElementById(btn.dataset.tab).classList.add('active');
+    btn.classList.add('active');
+    history.replaceState(null, '', '#' + btn.dataset.tab);
+    window.dispatchEvent(new Event('resize'));
+  });
+});
+if (location.hash) { var b = document.querySelector('.tab[data-tab="' + location.hash.slice(1) + '"]'); if (b) b.click(); }
+</script>
+{% endblock %}

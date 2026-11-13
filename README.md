@@ -1,101 +1,83 @@
-TW Stocks Mini App
-=================
+台股＋美股量化研究室
+==================
 
-Quick demo FastAPI app to fetch Taiwan stock data (via yfinance), store to SQLite, and show simple Plotly visualization.
+FastAPI 網站：用 Yahoo Finance 抓台股與美股日線資料（已調整除權息），做均線回測、
+參數穩健度檢查、walk-forward 機器學習、投資組合與風險管理。
 
-Run locally
+📘 **分析方法教學（含過擬合與適用時機）：[docs/GUIDE.md](docs/GUIDE.md)**，網站上也可在 `/guide` 閱讀。
 
-1. Create a virtualenv and install:
+## 本機執行
 
 ```bash
-cd ~/tw-stocks
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-2. Start the app:
-
-```bash
+pip install -r requirements-dev.txt
 uvicorn app.main:app --reload
 ```
 
-Endpoints
+打開 <http://127.0.0.1:8000/dashboard?symbol=2330> 或 `?symbol=AAPL`。
 
-- `POST /collect?symbol=2330.TW&period=1y&interval=1d` — fetch & store historical data
-- `GET /data?symbol=2330.TW&limit=100` — return JSON rows
-- `GET /plot?symbol=2330.TW` — HTML Plotly candlestick
-- `GET /analysis?symbol=2330.TW&fast_window=20&slow_window=60` — strategy statistics
-- `GET /model?symbol=2330.TW&model_name=random_forest&fast_window=20&slow_window=60` — machine-learning test statistics
-- `GET /risk?symbol=2330.TW&capital=100000&risk_per_trade=0.01&stop_loss_pct=0.05` — position-size estimate
-- `GET /risk-dashboard?symbol=2330.TW` — risk management UI
-- `GET /portfolio?symbols=2330.TW,006208.TW` — equal-weight portfolio analysis page
-- `GET /dashboard?symbol=2330.TW&fast_window=20&slow_window=60` — interactive analysis UI
-
-Quant dashboard
-
-Collect a symbol first, then open the dashboard in a browser:
+測試（使用模擬資料，不需要網路）：
 
 ```bash
-curl -X POST "http://127.0.0.1:8000/collect?symbol=2317.TW&period=1y&interval=1d"
-open "http://127.0.0.1:8000/dashboard?symbol=2317.TW"
+pytest -q
 ```
 
-The dashboard automatically fetches the latest one year of daily data when it
-loads, then reads the local SQLite database. Collection removes empty rows and
-updates an existing date instead of creating duplicate dates. Other API endpoints
-still read the database without automatically fetching remote data.
+## 支援的代號
 
-The dashboard has four tabs: research overview, ordinary candlesticks, strategy
-backtest, and machine learning. The moving-average strategy includes configurable
-fees and slippage. The model tab compares Logistic Regression with Random Forest
-and HistGradientBoosting to estimate next-day direction from momentum,
-moving-average ratio, volatility, and volume change. Use the model dropdown in
-the dashboard, or pass `model_name=logistic`, `random_forest`, or
-`gradient_boosting` to the API. Data is split in time order (70% train, 30% test) to reduce
-look-ahead bias. A more complex model is not automatically a better model, so
-compare both models on the unseen test period and against buy-and-hold.
+| 輸入 | 實際使用 |
+|---|---|
+| `2330`、`2330.tw` | `2330.TW`（上市） |
+| `6488` | 先試 `.TW`，查無資料自動改 `6488.TWO`（上櫃） |
+| `AAPL`、`nvda`、`SPY` | 美股 |
+| `BRK.B` | `BRK-B` |
 
-The model view also shows a naive baseline accuracy, precision, recall, model
-volatility, maximum drawdown, Sharpe ratio, and the latest probability/signal.
-An accuracy of 58% is meaningful only when it beats the baseline by a useful
-margin and still produces better risk-adjusted returns after costs.
+市場會自動決定交易成本與比較基準：台股手續費 0.1425%、賣出證交稅 0.3%（ETF 0.1%），基準 0050；
+美股零佣金，基準 SPY。所有成本都可以在畫面上覆寫（例如輸入券商折扣後的手續費）。
 
-Portfolio and risk tools
+## 頁面與 API
 
-Open `/portfolio?symbols=2330.TW,006208.TW` to compare an equal-weight portfolio,
-including its return, volatility, maximum drawdown, Sharpe ratio, and return
-correlation. Open `/risk` to estimate a position size from total capital, the
-maximum percentage to risk on one trade, and a fixed stop-loss distance. These
-are educational estimates, not broker orders or investment advice.
+| 路徑 | 說明 |
+|---|---|
+| `GET /dashboard?symbol=2330` | 研究室：總覽、K 線＋均線＋RSI、均線回測、參數穩健度、walk-forward 機器學習 |
+| `GET /portfolio?symbols=2330,0050,AAPL,SPY&weighting=inverse_vol` | 投資組合（等權重或風險平價、定期再平衡、風險貢獻） |
+| `GET /risk-dashboard?symbol=2330` | ATR 停損與部位大小 |
+| `GET /guide` | 分析方法教學 |
+| `GET /analysis` | 均線策略績效（JSON） |
+| `GET /robustness` | 均線參數穩健度與 Deflated Sharpe（JSON） |
+| `GET /model?model_name=logistic&horizon=5&step=63&compare=true` | Walk-forward 模型結果（JSON） |
+| `GET /risk` | 部位大小估算（JSON） |
+| `POST /collect?symbol=AAPL&period=10y` | 手動抓取並快取資料 |
+| `GET /data?symbol=2330&limit=100` | 快取的原始資料 |
 
-Quant beginner guide
+舊網址參數（`fast_window`、`slow_window`、`fee_rate`、`slippage_rate`、`model_name`）仍然可用。
 
-- A return answers: how much did the portfolio gain or lose?
-- Volatility describes how much daily returns moved around.
-- Maximum drawdown describes the worst fall from a previous peak.
-- Sharpe is a rough risk-adjusted comparison; it is not a guarantee of profit.
-- Accuracy is only a classification score. Compare model return with buy-and-hold
-	on the unseen test period before judging a model.
+## 程式結構
 
-These are historical experiments, not investment advice. The model is not a
-trading recommendation, and this project still needs stronger validation before
-real-money use.
+```
+app/
+  markets.py    代號正規化、台/美股成本與基準
+  collector.py  Yahoo Finance 下載、快取（6 小時內不重抓）
+  features.py   技術指標特徵（全部只用當天以前的資料）
+  metrics.py    Sharpe/Sortino/Calmar/回撤/Beta/Alpha、PSR、Deflated Sharpe
+  analysis.py   回測引擎、均線策略、參數穩健度、walk-forward 模型
+  portfolio.py  投資組合
+  main.py       FastAPI 路由與圖表
+  templates/    頁面
+docs/GUIDE.md   教學
+tests/          單元與 API 測試（含「隨機資料不應有預測力」與「真訊號應被偵測到」）
+```
 
-Deploy on Render
+## 部署到 Render
 
-1. Push this repository to GitHub.
-2. Sign in to Render and choose `New` -> `Blueprint`.
-3. Select `naitzu-cheng/tw-stocks` and deploy `render.yaml`.
-4. Render builds with `pip install -r requirements.txt` and starts the app with
-	Uvicorn. Open the generated `onrender.com` URL and add `/dashboard`.
+`render.yaml` 已設定 Python 3.12。Push 到 GitHub 後 Render 會自動部署。
 
-The current deployment uses SQLite. The free service filesystem is not a durable
-database, so a restart can remove the local cache; the Dashboard refreshes one
-year of data when it loads. Use PostgreSQL or a persistent disk before treating
-this as a long-term data service.
+免費方案的檔案系統不是永久的，重啟後 SQLite 快取會清空（網站會自動重抓）。
+若要保留資料，可建立 Render PostgreSQL，在 `requirements.txt` 加上 `psycopg2-binary`，
+並設定環境變數 `DATABASE_URL`。
 
-Notes
+免費方案 CPU 很弱，勾選「比較三個模型」會明顯變慢；結果會在記憶體中快取 6 小時。
 
-- Database file `stocks.db` will be created in the project root when collecting data.
-- Add `.venv` and `stocks.db` to `.gitignore` before pushing to GitHub.
+---
+
+歷史回測與教學用途，不構成投資建議。
