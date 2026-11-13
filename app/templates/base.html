@@ -56,7 +56,8 @@ table.t tr.sel td{background:#eef7f6;font-weight:600}
 <body>
 {% set active = active|default('') %}
 <nav>
-<a href="/dashboard?symbol={{ symbol|default('2330.TW')|urlencode }}" class="{{ 'on' if active=='dashboard' }}">研究室</a>
+<a href="/market" class="{{ 'on' if active=='market' }}">大盤總覽</a>
+<a href="/dashboard?symbol={{ symbol|default('2330.TW')|urlencode }}" class="{{ 'on' if active=='dashboard' }}">個股研究室</a>
 <a href="/portfolio" class="{{ 'on' if active=='portfolio' }}">投資組合</a>
 <a href="/risk-dashboard?symbol={{ symbol|default('2330.TW')|urlencode }}" class="{{ 'on' if active=='risk' }}">風險管理</a>
 <a href="/guide" class="{{ 'on' if active=='guide' }}">📘 分析方法教學</a>

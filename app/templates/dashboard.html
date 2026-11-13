@@ -36,24 +36,22 @@
   <button class="tab" data-tab="candles">K 線與指標</button>
   <button class="tab" data-tab="strategy">均線回測</button>
   <button class="tab" data-tab="robust">參數穩健度</button>
-  <button class="tab" data-tab="model">機器學習（Walk-forward）</button>
+  <button class="tab" data-tab="model">機器學習（點開才計算）</button>
 </div>
 
 <div id="overview" class="content active">
   <div class="panel">
     <h2>重點摘要</h2>
     <table class="t">
-      <tr><th></th><th>均線策略 {{ params.fast_window }}/{{ params.slow_window }}</th><th>買入持有</th>{% if ml %}<th>{{ ml.model_name }}（樣本外）</th>{% endif %}</tr>
-      {% set mlS = ml.strategy if ml else none %}
+      <tr><th></th><th>均線策略 {{ params.fast_window }}/{{ params.slow_window }}</th><th>買入持有</th></tr>
       {% for key, label, fmt in [('total_return','總報酬','pct'),('cagr','年化報酬 CAGR','pct'),('annual_volatility','年化波動','pct'),('sharpe','Sharpe','num'),('sortino','Sortino','num'),('max_drawdown','最大回撤','pct'),('calmar','Calmar','num'),('psr','PSR（Sharpe > 0 的機率）','pct'),('beta','Beta（對大盤）','num'),('alpha','年化 Alpha','pct')] %}
       <tr><td>{{ label }}</td>
-        {% for src in [m, m.buy_hold] + ([mlS] if mlS else []) %}
+        {% for src in [m, m.buy_hold] %}
         <td>{% if src.get(key) is none %}—{% elif fmt == 'pct' %}{{ src[key]|pct }}{% else %}{{ src[key]|num }}{% endif %}</td>
         {% endfor %}
       </tr>
       {% endfor %}
     </table>
-    {% if ml %}<p class="hint">機器學習欄位只涵蓋樣本外期間 {{ ml.oos_start }} 至 {{ ml.oos_end }}，與前兩欄期間不同，比較時請看「機器學習」分頁內同期間的買入持有。</p>{% endif %}
   </div>
   <div class="panel">
     <h2>怎麼解讀？</h2>
@@ -108,39 +106,7 @@
 </div>
 
 <div id="model" class="content">
-  {% if ml %}
-  <div class="panel">
-    <h2>{{ ml.model_name }}：預測 {{ ml.horizon }} 日後漲跌</h2>
-    <p class="hint">Walk-forward：每 {{ ml.step }} 個交易日用「當時以前」的資料重新訓練一次，共 {{ ml.n_folds }} 段，樣本外期間 {{ ml.oos_start }} 至 {{ ml.oos_end }}（{{ ml.test_observations }} 天）。
-      訓練與測試之間保留 {{ ml.horizon }} 天空窗避免標籤洩漏。進場門檻 = 訓練期上漲比例 ± {{ ml.band|pct(0) }}，也就是模型必須比「永遠看多」更有把握才進場。</p>
-    {% for level, text in ml.verdict %}<div class="note {{ level }}">{{ text }}</div>{% endfor %}
-    <div class="cards">
-      <div class="card"><span>樣本外準確率</span><strong>{{ ml.accuracy|pct }}</strong><small>基準 {{ ml.baseline_accuracy|pct }}</small></div>
-      <div class="card"><span>AUC</span><strong>{{ ml.auc|num }}</strong><small>0.5 = 丟銅板</small></div>
-      <div class="card"><span>訓練準確率</span><strong>{{ ml.train_accuracy|pct }}</strong><small>落差 {{ ml.overfit_gap|pct }}</small></div>
-      <div class="card"><span>p-value</span><strong>{{ ml.p_value|num(3) }}</strong><small>&lt; 0.05 才算顯著</small></div>
-      <div class="card"><span>策略 Sharpe</span><strong>{{ ml.strategy.sharpe|num }}</strong><small>同期持有 {{ ml.buy_hold.sharpe|num }}</small></div>
-      <div class="card"><span>策略報酬</span><strong>{{ ml.strategy.total_return|pct }}</strong><small>同期持有 {{ ml.buy_hold.total_return|pct }}</small></div>
-      <div class="card"><span>最大回撤</span><strong>{{ ml.strategy.max_drawdown|pct }}</strong><small>同期持有 {{ ml.buy_hold.max_drawdown|pct }}</small></div>
-      <div class="card"><span>持倉比例</span><strong>{{ ml.exposure|pct }}</strong><small>交易 {{ ml.trades }} 次</small></div>
-    </div>
-    <p><b>最新讀數（{{ ml.latest_date }}）</b>：{{ ml.latest_signal }}，模型估計 {{ ml.horizon }} 日後上漲機率 {{ ml.latest_probability|pct }}（門檻 {{ ml.latest_threshold|pct }}）。
-      <span class="hint">只有在上面的驗證結果顯著時，這個讀數才有參考價值。</span></p>
-  </div>
-  <div class="chart">{{ charts.model|safe }}</div>
-  <div class="grid2">
-    {% if ml.comparison|length > 1 %}
-    <div class="panel"><h3>模型比較（同一段樣本外）</h3>
-      <div class="scroll"><table class="t"><tr><th>模型</th><th>準確率</th><th>訓練</th><th>AUC</th><th>p</th><th>Sharpe</th><th>報酬</th></tr>
-      {% for k, c in ml.comparison.items() %}<tr class="{{ 'sel' if k == ml.model_key }}"><td>{{ c.label }}</td><td>{{ c.accuracy|pct }}</td><td>{{ c.train_accuracy|pct }}</td><td>{{ c.auc|num }}</td><td>{{ c.p_value|num(2) }}</td><td>{{ c.sharpe|num }}</td><td>{{ c.total_return|pct }}</td></tr>{% endfor %}
-      </table></div>
-      <p class="hint">「訓練」遠高於「準確率」的模型就是在背答案。複雜模型不一定比較好。</p></div>
-    {% endif %}
-    <div class="panel"><h3>最終模型最依賴的特徵</h3>
-      <table class="t">{% for f in ml.importance %}<tr><td>{{ f.feature }}</td><td style="width:45%"><div class="bar" style="width:{{ (f.weight * 250)|round(0) }}%;max-width:100%"></div></td><td>{{ f.weight|pct(0) }}</td></tr>{% endfor %}</table>
-      <p class="hint">特徵共 {{ ml.features|length }} 個：{{ ml.features|join('、') }}。重要度只代表模型「用了誰」，不代表因果。</p></div>
-  </div>
-  {% else %}<div class="note warn">{{ errors.ml }}</div>{% endif %}
+  <div id="ml-body" data-src="/dashboard/ml?{{ ml_query }}"><div class="panel"><p class="hint">⏳ 模型訓練中（walk-forward 要重新訓練很多次，約 5～30 秒）…</p></div></div>
 </div>
 
 <script>
@@ -152,8 +118,24 @@ document.querySelectorAll('.tab').forEach(function (btn) {
     btn.classList.add('active');
     history.replaceState(null, '', '#' + btn.dataset.tab);
     window.dispatchEvent(new Event('resize'));
+    if (btn.dataset.tab === 'model') loadModel();
   });
 });
+var mlLoaded = false;
+function loadModel() {
+  if (mlLoaded) return;
+  mlLoaded = true;
+  var box = document.getElementById('ml-body');
+  fetch(box.dataset.src).then(function (r) { return r.json(); }).then(function (d) {
+    box.innerHTML = d.html;
+    if (d.figure && window.Plotly) {
+      Plotly.newPlot('ml-chart', d.figure.data, d.figure.layout, {displaylogo: false, responsive: true});
+    }
+  }).catch(function (e) {
+    mlLoaded = false;
+    box.innerHTML = '<div class="note bad">模型載入失敗：' + e + '，請再點一次分頁重試。</div>';
+  });
+}
 if (location.hash) { var b = document.querySelector('.tab[data-tab="' + location.hash.slice(1) + '"]'); if (b) b.click(); }
 </script>
 {% endblock %}

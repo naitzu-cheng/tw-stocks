@@ -1,4 +1,9 @@
+import json
+from urllib.parse import urlencode
+import os
+from contextlib import asynccontextmanager
 import math
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -15,14 +20,24 @@ from plotly.subplots import make_subplots
 
 from app.analysis import (Costs, MODEL_LABELS, build_analysis, ma_robustness,
                           walk_forward)
-from app.collector import ensure_fresh, fetch_and_store, get_data
+from app.collector import ensure_fresh, ensure_fresh_many, fetch_and_store, get_data
 from app.features import atr
 from app.markets import normalize_symbol, profile_for
 from app.portfolio import WEIGHTINGS, build_portfolio_analysis
+from app.screener import regime, screen, validate
+from app.universe import MARKETS
 
 ROOT = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
-app = FastAPI(title="TW & US Stocks Quant Lab")
+@asynccontextmanager
+async def lifespan(_app):
+    # Fill the market-summary cache in the background so the first visitor waits less.
+    if os.environ.get("PREFETCH_MARKETS", "1") == "1":
+        threading.Thread(target=_warm_markets, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="TW & US Stocks Quant Lab", lifespan=lifespan)
 
 PLOT_LAYOUT = dict(template="plotly_white", margin=dict(l=40, r=20, t=50, b=70),
                    legend=dict(orientation="h", y=-0.06, yanchor="top", x=0))
@@ -104,7 +119,7 @@ def to_html(fig, first=False):
 # ---------------------------------------------------------------- JSON API
 @app.get("/")
 def root():
-    return RedirectResponse("/dashboard")
+    return RedirectResponse("/market")
 
 
 @app.post("/collect")
@@ -239,18 +254,11 @@ def dashboard(request: Request, symbol: str = "2330.TW", fast_window: int = 20,
         robust = ma_robustness(df, costs, fast_window, slow_window)
     except ValueError as e:
         robust, errors["robust"] = None, str(e)
-    try:
-        ml = run_model(symbol, model_name, horizon, step, band, compare, fast_window,
-                       slow_window, costs, bench)
-    except ValueError as e:
-        ml, errors["ml"] = None, str(e)
 
     charts = {"price": to_html(price_figure(strat["prices"], strat["metrics"]["trade_log"]), first=True),
               "strategy": to_html(strategy_figure(strat["prices"], bench))}
     if robust:
         charts["heatmap"] = to_html(heatmap_figure(robust))
-    if ml:
-        charts["model"] = to_html(model_figure(ml["model_prices"]))
 
     return templates.TemplateResponse(request, "dashboard.html", {
         "symbol": symbol, "profile": profile, "costs": costs,
@@ -259,11 +267,29 @@ def dashboard(request: Request, symbol: str = "2330.TW", fast_window: int = 20,
                    "model_name": model_name, "horizon": horizon, "step": step,
                    "band": band, "compare": compare},
         "models": MODEL_LABELS, "m": strat["metrics"], "robust": robust,
-        "ml": ml["model_metrics"] if ml else None, "charts": charts,
+        "charts": charts, "ml_query": urlencode({**dict(request.query_params), "symbol": symbol}),
         "errors": errors, "refresh_error": refresh_error,
         "latest_close": float(df["Close"].iloc[-1]),
         "latest_date": df.index[-1].strftime("%Y-%m-%d"),
     })
+
+
+@app.get("/dashboard/ml")
+def dashboard_ml(request: Request, symbol: str = "2330.TW", fast_window: int = 20,
+                 slow_window: int = 60, fee_rate: Optional[float] = None,
+                 tax_rate: Optional[float] = None, slippage_rate: Optional[float] = None,
+                 model_name: str = "logistic", horizon: int = 5, step: int = 63,
+                 band: float = 0.02, compare: bool = False):
+    """Machine-learning tab, loaded only when the user opens it (it is slow)."""
+    symbol, _ = resolve(symbol, refresh=False)
+    _, costs = costs_for(symbol, fee_rate, tax_rate, slippage_rate)
+    try:
+        ml = run_model(symbol, model_name, horizon, step, band, compare, fast_window,
+                       slow_window, costs, benchmark_close(symbol, refresh=False))
+    except ValueError as e:
+        return {"html": f'<div class="note warn">{e}</div>', "figure": None}
+    html = templates.get_template("ml_panel.html").render(ml=ml["model_metrics"])
+    return {"html": html, "figure": json.loads(model_figure(ml["model_prices"]).to_json())}
 
 
 def price_figure(bt, trades):
@@ -414,4 +440,90 @@ def _num(value, digits=2):
 
 
 templates.env.filters["pct"] = _pct
+templates.env.filters["spct"] = lambda v, d=1: ("+" if v is not None and v > 0 else "") + _pct(v, d)
 templates.env.filters["num"] = _num
+
+
+# ---------------------------------------------------------------- market summary
+def market_summary(market: str):
+    if market not in MARKETS:
+        raise HTTPException(status_code=400, detail="market 必須是 TW 或 US")
+    cfg = MARKETS[market]
+    symbols = cfg["universe"] + [cfg["index"]]
+    errors = ensure_fresh_many(symbols)
+    closes = {}
+    for s in cfg["universe"]:
+        df = get_data(s, limit=None)
+        if not df.empty:
+            closes[s] = df["Close"]
+    if len(closes) < 5:
+        raise HTTPException(status_code=502, detail="成分股資料不足，可能是資料來源暫時無法連線：" + "；".join(errors[:3]))
+    closes = pd.DataFrame(closes).sort_index()
+    idx = get_data(cfg["index"], limit=None)
+    index_close = None if idx.empty else idx["Close"]
+    key = ("market", market, str(closes.index[-1]), closes.shape)
+
+    def build():
+        _, costs = costs_for(cfg["universe"][0])
+        return {"screen": screen(closes), "regime": regime(index_close, closes),
+                "validate": validate(closes, index_close, costs)}
+    result = cached(key, build)
+    return cfg, result, errors
+
+
+@app.get("/market.json")
+def market_json(market: str = "TW"):
+    cfg, r, errors = market_summary(market.upper())
+    reg = {k: v for k, v in r["regime"].items() if not isinstance(v, pd.Series)}
+    val = r["validate"]
+    val = None if val is None else {k: v for k, v in val.items() if not isinstance(v, pd.Series)}
+    return clean({"market": market.upper(), "regime": reg, "validation": val,
+                  "stocks": r["screen"].to_dict(orient="records"), "errors": errors})
+
+
+@app.get("/market", response_class=HTMLResponse)
+def market_page(request: Request, market: str = "TW"):
+    market = market.upper()
+    cfg, r, errors = market_summary(market)
+    reg, table, val = r["regime"], r["screen"], r["validate"]
+    charts = {}
+    if "index_history" in reg:
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.65, 0.35],
+                            vertical_spacing=0.06)
+        fig.add_trace(go.Scatter(x=reg["index_history"].index, y=reg["index_history"],
+                                 name=cfg["index_label"], line=dict(color="#0b6e69", width=2)), 1, 1)
+        fig.add_trace(go.Scatter(x=reg["index_ma200"].index, y=reg["index_ma200"],
+                                 name="200 日線", line=dict(color="#c9a227", width=1.5, dash="dot")), 1, 1)
+        bh = reg["breadth_history"]
+        fig.add_trace(go.Scatter(x=bh.index, y=bh, name="站上 200 日線的比例",
+                                 fill="tozeroy", line=dict(color="#7a4fd0", width=1)), 2, 1)
+        fig.add_hline(y=0.5, line=dict(dash="dot", color="#999", width=1), row=2, col=1)
+        fig.update_yaxes(tickformat=".0%", range=[0, 1], row=2, col=1)
+        fig.update_layout(height=520, title="大盤與市場廣度", **PLOT_LAYOUT)
+        charts["regime"] = to_html(fig, first=True)
+    if val:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=val["strategy_equity"].index, y=val["strategy_equity"],
+                                 name=f"每月持有偏多前 {val['top_n']} 名", line=dict(color="#0b6e69", width=2)))
+        fig.add_trace(go.Scatter(x=val["universe_equity"].index, y=val["universe_equity"],
+                                 name="名單內全部等權重", line=dict(color="#888", width=1.5)))
+        if "index_equity" in val:
+            fig.add_trace(go.Scatter(x=val["index_equity"].index, y=val["index_equity"],
+                                     name=cfg["index_label"], line=dict(color="#c9a227", width=1.2, dash="dot")))
+        fig.update_layout(height=420, title="這套規則過去有沒有用？（含交易成本）", **PLOT_LAYOUT)
+        charts["validate"] = to_html(fig, first="regime" not in charts)
+    groups = {k: table[table["signal"] == k].to_dict(orient="records") for k in ("bull", "hot", "bear")}
+    return templates.TemplateResponse(request, "market.html", {
+        "market": market, "cfg": cfg, "markets": MARKETS, "reg": reg, "val": val,
+        "groups": groups, "rows": table.to_dict(orient="records"), "charts": charts,
+        "errors": errors, "symbol": "2330.TW" if market == "TW" else "AAPL",
+        "as_of": reg.get("index_date"),
+    })
+
+
+def _warm_markets():
+    for m in MARKETS:
+        try:
+            market_summary(m)
+        except Exception:
+            pass
