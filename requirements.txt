@@ -1,9 +1,11 @@
-fastapi
-uvicorn[standard]
-pandas
-yfinance
-# multitasking 0.0.12 uses Python 3.9+ type syntax; this project currently runs on Python 3.8.
-multitasking==0.0.11
-plotly
-sqlalchemy
-scikit-learn
+fastapi>=0.115
+uvicorn[standard]>=0.30
+jinja2>=3.1
+markdown>=3.6
+pandas>=2.2
+numpy>=1.26
+scipy>=1.11
+yfinance>=0.2.54
+plotly>=5.22
+sqlalchemy>=2.0
+scikit-learn>=1.4

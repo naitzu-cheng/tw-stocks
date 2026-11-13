@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% set active = 'portfolio' %}
+{% block title %}投資組合分析{% endblock %}
+{% block body %}
+<header><h1>投資組合分析</h1><small>{{ m.start }} 至 {{ m.end }}｜{{ m.weighting_label }}，每 {{ rebalance_days }} 個交易日再平衡</small></header>
+{% for e in errors %}<div class="note warn">{{ e }}</div>{% endfor %}
+<form class="controls" method="get">
+  <label>股票代號（逗號分隔，可混台美股）<input class="wide" name="symbols" value="{{ symbols }}"></label>
+  <label>權重方式<select name="weighting" style="width:180px">{% for k, v in weightings.items() %}<option value="{{ k }}" {{ 'selected' if k == weighting }}>{{ v }}</option>{% endfor %}</select></label>
+  <label>再平衡天數<input type="number" name="rebalance_days" value="{{ rebalance_days }}" min="1"></label>
+  <button type="submit">更新組合</button>
+</form>
+<div class="cards">
+  <div class="card"><span>總報酬</span><strong>{{ m.total_return|pct }}</strong></div>
+  <div class="card"><span>年化報酬</span><strong>{{ m.cagr|pct }}</strong></div>
+  <div class="card"><span>年化波動</span><strong>{{ m.annual_volatility|pct }}</strong></div>
+  <div class="card"><span>最大回撤</span><strong>{{ m.max_drawdown|pct }}</strong></div>
+  <div class="card"><span>Sharpe</span><strong>{{ m.sharpe|num }}</strong><small>PSR {{ m.psr|pct(0) }}</small></div>
+  {% if m.beta is defined %}<div class="card"><span>Beta</span><strong>{{ m.beta|num }}</strong><small>相關 {{ m.correlation|num }}</small></div>{% endif %}
+</div>
+<div class="panel"><h2>目前權重與風險貢獻</h2>
+  <div class="scroll"><table class="t"><tr><th>代號</th><th>權重</th><th>年化波動</th><th>風險貢獻</th><th>期間報酬</th></tr>
+  {% for s in per_stock %}<tr><td>{{ s.symbol }}</td><td>{{ s.weight|pct }}</td><td>{{ s.volatility|pct }}</td><td>{{ s.risk_contribution|pct }}</td><td>{{ s.total_return|pct }}</td></tr>{% endfor %}
+  </table></div>
+  <p class="hint"><b>風險貢獻</b>：組合波動中有多少來自這支股票。等權重時，高波動的股票會貢獻遠超過它權重的風險；風險平價（波動倒數）會讓各檔貢獻比較接近。混合台美股時忽略匯率變動，各自以原幣計算報酬。</p>
+</div>
+<div class="chart">{{ chart|safe }}</div>
+<div class="chart">{{ corr_chart|safe }}</div>
+<p class="hint">相關係數越低，分散效果越好。危機時相關性常會一起升高，分散效果會比平常差。</p>
+{% endblock %}

@@ -1,34 +1,106 @@
-import yfinance as yf
+"""Download daily prices from Yahoo Finance and cache them in the database."""
+from datetime import datetime, timedelta, timezone
+import threading
+
 import pandas as pd
-from app.db import engine, ensure_table
+import yfinance as yf
+from sqlalchemy import inspect, text
+
+from app.db import engine, table_name_for
+from app.markets import alternate_taiwan_symbol, normalize_symbol
+
+PRICE_COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
+DEFAULT_PERIOD = "5y"          # 1 year is far too short to test a strategy
+REFRESH_AFTER = timedelta(hours=6)
+
+_fetched_at = {}
+_lock = threading.Lock()
 
 
-def fetch_and_store(symbol, period="1y", interval="1d"):
-    ticker = yf.Ticker(symbol)
-    df = ticker.history(period=period, interval=interval)
+def _download(symbol, period, interval):
+    # auto_adjust=True: prices are adjusted for dividends and splits. Taiwan
+    # stocks pay large dividends, so unadjusted closes understate returns.
+    df = yf.Ticker(symbol).history(period=period, interval=interval, auto_adjust=True)
     if df is None or df.empty:
-        return 0
-    df = df[df["Close"].notna()].copy()
-    if df.empty:
-        return 0
+        return pd.DataFrame()
+    df = df[[c for c in PRICE_COLUMNS if c in df.columns]]
+    df = df[df["Close"].notna() & (df["Close"] > 0)].copy()
+    idx = pd.DatetimeIndex(df.index)
+    if idx.tz is not None:
+        idx = idx.tz_localize(None)
+    df.index = idx.normalize()
     df.index.name = "date"
-    ensure_table(symbol)
-    table_name = symbol.replace('.', '_')
-    try:
-        existing = pd.read_sql_table(table_name, con=engine, index_col="date",
-                                     parse_dates=["date"])
-        combined = pd.concat([existing, df])
-        combined = combined[~combined.index.duplicated(keep="last")].sort_index()
-    except Exception:
+    return df[~df.index.duplicated(keep="last")].sort_index()
+
+
+def store(symbol, df):
+    """Merge new rows into the cached table (new values win)."""
+    table = table_name_for(symbol)
+    existing = get_data(symbol, limit=None)
+    if not existing.empty:
+        # Re-downloaded adjusted prices supersede the cache, because a new
+        # dividend changes every earlier adjusted close.
+        if len(df) and df.index[0] <= existing.index[0]:
+            combined = df
+        else:
+            combined = pd.concat([existing, df])
+            combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+    else:
         combined = df
-    combined.to_sql(table_name, con=engine, if_exists="replace", index=True)
+    combined.to_sql(table, con=engine, if_exists="replace", index=True)
     return len(df)
 
 
-def get_data(symbol, limit=100):
-    table = symbol.replace('.', '_')
+def fetch_and_store(symbol, period=DEFAULT_PERIOD, interval="1d"):
+    """Download and store. Returns (resolved_symbol, rows_downloaded)."""
+    symbol = normalize_symbol(symbol)
+    df = _download(symbol, period, interval)
+    if df.empty:
+        alt = alternate_taiwan_symbol(symbol)
+        if alt:
+            alt_df = _download(alt, period, interval)
+            if not alt_df.empty:
+                symbol, df = alt, alt_df
+    if df.empty:
+        return symbol, 0
+    rows = store(symbol, df)
+    with _lock:
+        _fetched_at[symbol] = datetime.now(timezone.utc)
+    return symbol, rows
+
+
+def ensure_fresh(symbol, period=DEFAULT_PERIOD):
+    """Fetch only when the cache is missing or older than REFRESH_AFTER.
+
+    Returns (resolved_symbol, error_message_or_None).
+    """
+    symbol = normalize_symbol(symbol)
+    with _lock:
+        last = _fetched_at.get(symbol)
+    if last and datetime.now(timezone.utc) - last < REFRESH_AFTER and has_data(symbol):
+        return symbol, None
     try:
-        df = pd.read_sql_table(table, con=engine, index_col='date', parse_dates=['date'])
-        return df.tail(limit)
-    except Exception:
+        resolved, rows = fetch_and_store(symbol, period=period)
+        if rows == 0 and not has_data(resolved):
+            return resolved, f"Yahoo Finance 找不到 {symbol} 的資料"
+        return resolved, None
+    except Exception as exc:  # network errors: fall back to cache
+        alt = alternate_taiwan_symbol(symbol)
+        if not has_data(symbol) and alt and has_data(alt):
+            return alt, f"資料更新失敗，使用快取：{exc}"
+        return symbol, f"資料更新失敗，使用快取：{exc}"
+
+
+def has_data(symbol):
+    return inspect(engine).has_table(table_name_for(symbol))
+
+
+def get_data(symbol, limit=2000):
+    symbol = normalize_symbol(symbol)
+    table = table_name_for(symbol)
+    if not has_data(symbol):
         return pd.DataFrame()
+    with engine.connect() as conn:
+        df = pd.read_sql(text(f'SELECT * FROM "{table}" ORDER BY date'), conn,
+                         index_col="date", parse_dates=["date"])
+    return df if limit is None else df.tail(limit)
