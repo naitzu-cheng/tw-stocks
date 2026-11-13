@@ -5,7 +5,7 @@ from app.analysis import build_analysis, build_model_analysis
 from app.portfolio import build_portfolio_analysis
 import plotly.graph_objs as go
 import plotly.io as pio
-
+include_router
 app = FastAPI(title="TW Stocks Mini App")
 
 
