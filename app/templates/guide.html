@@ -3,14 +3,15 @@
 {% block title %}分析方法教學{% endblock %}
 {% block body %}
 <style>
-.guide{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 26px 26px}
+.guide{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:8px 28px 28px}
 .guide h1{margin-top:18px}.guide h2{margin-top:30px;padding-top:10px;border-top:1px solid var(--line)}
 .guide table{border-collapse:collapse;width:100%;font-size:14px;display:block;overflow-x:auto}
 .guide td,.guide th{border:1px solid var(--line);padding:6px 9px;vertical-align:top}
-.guide th{background:#f0f4f6}
-.guide code{background:#f0f4f6;padding:1px 5px;border-radius:4px;font-size:13px}
-.guide pre{background:#f0f4f6;padding:12px;border-radius:6px;overflow-x:auto}
-.guide blockquote{margin:12px 0;padding:8px 14px;background:var(--warn-bg);border-left:4px solid #d99000}
+.guide th{background:var(--brand-soft);font-weight:400}
+.guide h2{color:var(--brand-ink)}
+.guide code{background:var(--brand-soft);padding:1px 5px;border-radius:4px;font-size:13px}
+.guide pre{background:#fcfaff;padding:12px;border-radius:6px;overflow-x:auto}
+.guide blockquote{margin:12px 0;padding:10px 16px;background:var(--lemon-soft);border-radius:16px;border:0}
 @media(max-width:760px){.guide{padding:4px 14px 18px}}
 </style>
 <article class="guide">{{ body|safe }}</article>

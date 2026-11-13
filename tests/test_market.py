@@ -84,3 +84,27 @@ def test_dashboard_ml_is_lazy(client):
 
 def test_bad_market(client):
     assert client.get("/market?market=JP").status_code == 400
+
+
+def test_market_switch_is_global(client):
+    # Switching to US from the dashboard lands on a US stock and is remembered.
+    r = client.get("/switch-market?to=US&next=/dashboard", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/dashboard?symbol=AAPL"
+    assert "market=US" in r.headers["set-cookie"]
+    client.cookies.set("market", "US")
+    page = client.get("/dashboard")
+    assert page.status_code == 200 and "AAPL" in page.text
+    assert client.get("/portfolio").text.count("NVDA") >= 1
+    assert "S&amp;P 500" in client.get("/market").text or "S&P 500" in client.get("/market").text
+    # Viewing a Taiwan stock flips the switch back and remembers the last symbol.
+    r = client.get("/dashboard?symbol=2454")
+    assert "market=TW" in r.headers["set-cookie"] and "last_TW=2454.TW" in r.headers["set-cookie"]
+    client.cookies.set("last_TW", "2454.TW")
+    r = client.get("/switch-market?to=TW&next=/risk-dashboard", follow_redirects=False)
+    assert r.headers["location"] == "/risk-dashboard?symbol=2454.TW"
+
+
+def test_switch_market_blocks_open_redirect(client):
+    r = client.get("/switch-market?to=US&next=//evil.example", follow_redirects=False)
+    assert r.headers["location"].startswith("/") and "evil" not in r.headers["location"]
+    assert client.get("/switch-market?to=JP").status_code == 400

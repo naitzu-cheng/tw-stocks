@@ -2,7 +2,7 @@
 {% set active = 'risk' %}
 {% block title %}風險管理{% endblock %}
 {% block body %}
-<header><h1>風險管理：部位大小</h1><span class="badge">{{ r.market }} · {{ r.currency }}</span></header>
+<header><h1>🛡️ 風險管理：部位大小</h1><span class="badge">{{ r.market }} · {{ r.currency }}</span></header>
 <p class="hint">先決定「錯了最多賠多少」，再反推可以買多少。停損預設用 ATR（平均真實波幅），會隨個股波動自動調整，比固定 5% 更合理。</p>
 <form class="controls" method="get">
   <label>股票代號<input name="symbol" value="{{ symbol }}"></label>
@@ -10,7 +10,8 @@
   <label>單筆風險比例<input type="number" name="risk_per_trade" value="{{ r.risk_per_trade }}" step="0.001" min="0.001"></label>
   <label>ATR 倍數<input type="number" name="atr_multiple" value="{{ r.atr_multiple }}" step="0.5" min="0.5"></label>
   <label>固定停損比例（選填）<input type="number" name="stop_loss_pct" value="{{ stop_loss_input if stop_loss_input is not none }}" step="0.01" min="0.001" placeholder="用 ATR"></label>
-  <button type="submit">計算</button>
+  <button type="submit">🧮 計算</button>
+  <div class="chips" style="flex-basis:100%;margin-top:0">熱門：{% for c in chips %}<a href="/risk-dashboard?symbol={{ c|urlencode }}" class="{{ 'on' if c == symbol }}">{{ c }}</a>{% endfor %}</div>
 </form>
 <div class="cards">
   <div class="card"><span>最新收盤價</span><strong>{{ r.latest_close|num }}</strong></div>
@@ -21,7 +22,7 @@
   <div class="card"><span>部位金額</span><strong>{{ r.position_value|num(0) }}</strong><small>占資金 {{ r.position_weight|pct }}</small></div>
   <div class="card"><span>近 60 日年化波動</span><strong>{{ r.annual_volatility_60d|pct }}</strong></div>
 </div>
-<div class="panel"><b>怎麼看？</b>
+<div class="panel"><b>💡 怎麼看？</b>
   <p>建議股數 = 可承擔損失 ÷（股價 × 停損距離），且不超過總資金可買的數量。單筆風險 1% 代表連錯 10 次約虧 10%，仍有翻身機會。
   實際交易還要考慮跳空（停損價不一定成交）、流動性、台股漲跌停與零股成交量。</p></div>
 {% endblock %}

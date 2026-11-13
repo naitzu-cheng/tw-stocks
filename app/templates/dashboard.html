@@ -3,7 +3,7 @@
 {% block title %}{{ symbol }} 量化研究室{% endblock %}
 {% block body %}
 <header>
-  <h1>{{ symbol }} 量化研究室</h1>
+  <h1>🔍 {{ symbol }}</h1>
   <span class="badge">{{ profile.label }} · {{ profile.currency }}</span>
   <small>最新收盤 {{ latest_close|num }}（{{ latest_date }}）｜回測期間 {{ m.start }} 至 {{ m.end }}，{{ m.observations }} 個交易日｜基準 {{ profile.benchmark }}</small>
 </header>
@@ -18,9 +18,9 @@
     <label>長均線<input type="number" name="slow_window" value="{{ params.slow_window }}" min="3"></label>
   </fieldset>
   <fieldset><legend>交易成本（空白 = 依市場自動）</legend>
-    <label>手續費率<input type="number" name="fee_rate" value="{{ params.fee_rate if params.fee_rate is not none }}" placeholder="{{ profile.fee_rate }}" step="any" min="0"></label>
-    <label>賣出稅率<input type="number" name="tax_rate" value="{{ params.tax_rate if params.tax_rate is not none }}" placeholder="{{ profile.tax_rate }}" step="any" min="0"></label>
-    <label>滑價率<input type="number" name="slippage_rate" value="{{ params.slippage_rate if params.slippage_rate is not none }}" placeholder="{{ profile.slippage_rate }}" step="any" min="0"></label>
+    <label>手續費率<input type="number" name="fee_rate" value="{{ params.fee_rate if params.fee_rate is not none }}" placeholder="{{ profile.fee_rate|plain }}" step="any" min="0"></label>
+    <label>賣出稅率<input type="number" name="tax_rate" value="{{ params.tax_rate if params.tax_rate is not none }}" placeholder="{{ profile.tax_rate|plain }}" step="any" min="0"></label>
+    <label>滑價率<input type="number" name="slippage_rate" value="{{ params.slippage_rate if params.slippage_rate is not none }}" placeholder="{{ profile.slippage_rate|plain }}" step="any" min="0"></label>
   </fieldset>
   <fieldset><legend>機器學習</legend>
     <label>模型<select name="model_name">{% for k, v in models.items() %}<option value="{{ k }}" {{ 'selected' if k == params.model_name }}>{{ v }}</option>{% endfor %}</select></label>
@@ -28,7 +28,8 @@
     <label>重新訓練間隔<input type="number" name="step" value="{{ params.step }}" min="5"></label>
     <label class="check"><input type="checkbox" name="compare" value="true" {{ 'checked' if params.compare }}>比較三個模型（較慢）</label>
   </fieldset>
-  <button type="submit">更新研究</button>
+  <button type="submit">✨ 更新研究</button>
+  <div class="chips" style="flex-basis:100%;margin-top:0">熱門：{% for c in chips %}<a href="/dashboard?symbol={{ c|urlencode }}" class="{{ 'on' if c == symbol }}">{{ c }}</a>{% endfor %}</div>
 </form>
 
 <div class="tabs">
@@ -41,7 +42,7 @@
 
 <div id="overview" class="content active">
   <div class="panel">
-    <h2>重點摘要</h2>
+    <h2>📊 重點摘要</h2>
     <table class="t">
       <tr><th></th><th>均線策略 {{ params.fast_window }}/{{ params.slow_window }}</th><th>買入持有</th></tr>
       {% for key, label, fmt in [('total_return','總報酬','pct'),('cagr','年化報酬 CAGR','pct'),('annual_volatility','年化波動','pct'),('sharpe','Sharpe','num'),('sortino','Sortino','num'),('max_drawdown','最大回撤','pct'),('calmar','Calmar','num'),('psr','PSR（Sharpe > 0 的機率）','pct'),('beta','Beta（對大盤）','num'),('alpha','年化 Alpha','pct')] %}
@@ -54,7 +55,7 @@
     </table>
   </div>
   <div class="panel">
-    <h2>怎麼解讀？</h2>
+    <h2>💡 怎麼解讀？</h2>
     <p><b>Sharpe</b> 是每單位波動換到的報酬；<b>PSR</b> 考慮了樣本長度與肥尾，告訴你「這個 Sharpe 是真的大於 0」的機率，低於 95% 時別太當真。
     <b>Calmar</b> = 年化報酬 / 最大回撤，衡量「痛苦值不值得」。<b>Beta / Alpha</b> 是相對 {{ profile.benchmark }} 的表現，Alpha 才是策略本身的貢獻。</p>
     <p>詳細說明、何時容易過擬合、各方法適用時機，請看 <a href="/guide">分析方法教學</a>。</p>
@@ -83,7 +84,7 @@
 <div id="robust" class="content">
   {% if robust %}
   <div class="panel">
-    <h2>你的參數是真的好，還是剛好？</h2>
+    <h2>🎲 你的參數是真的好，還是剛好？</h2>
     <p class="hint">把資料切成「樣本內」（{{ robust.split_date }} 之前）與「樣本外」（之後）。在樣本內測試 {{ robust.n_trials }} 組均線參數，挑出最好的，再看它在沒看過的樣本外表現如何。</p>
     <div class="cards">
       <div class="card"><span>樣本內最佳參數</span><strong>{{ robust.best_in_sample.fast }}/{{ robust.best_in_sample.slow }}</strong><small>樣本內 Sharpe {{ robust.best_in_sample.sharpe_in|num }}</small></div>
@@ -106,7 +107,7 @@
 </div>
 
 <div id="model" class="content">
-  <div id="ml-body" data-src="/dashboard/ml?{{ ml_query }}"><div class="panel"><p class="hint">⏳ 模型訓練中（walk-forward 要重新訓練很多次，約 5～30 秒）…</p></div></div>
+  <div id="ml-body" data-src="/dashboard/ml?{{ ml_query }}"><div class="panel"><p class="hint" style="text-align:center;font-size:16px"><span style="font-size:40px;display:block">🐣💭</span>模型訓練中（walk-forward 要重新訓練很多次，約 5～30 秒）…</p></div></div>
 </div>
 
 <script>

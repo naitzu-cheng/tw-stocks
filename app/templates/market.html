@@ -7,8 +7,8 @@
     <tr><th>代號</th><th>收盤</th><th>1 月</th><th>3 月</th><th>12-1 月動能</th><th>RSI</th><th>距 52 週高</th><th>分數</th></tr>
     {% for r in items %}
     <tr><td><a href="/dashboard?symbol={{ r.symbol|urlencode }}">{{ r.symbol }}</a></td>
-      <td>{{ r.close|num }}</td><td>{{ r.ret_1m|spct }}</td><td>{{ r.ret_3m|spct }}</td>
-      <td>{{ r.mom_12_1|spct }}</td><td>{{ r.rsi|num(0) }}</td><td>{{ r.from_high|pct }}</td><td><b>{{ r.score|num(0) }}</b></td></tr>
+      <td>{{ r.close|num }}</td><td class="{{ 'up' if r.ret_1m > 0 else 'down' }}">{{ r.ret_1m|spct }}</td><td class="{{ 'up' if r.ret_3m > 0 else 'down' }}">{{ r.ret_3m|spct }}</td>
+      <td class="{{ 'up' if r.mom_12_1 > 0 else 'down' }}">{{ r.mom_12_1|spct }}</td><td>{{ r.rsi|num(0) }}</td><td>{{ r.from_high|pct }}</td><td><b>{{ r.score|num(0) }}</b></td></tr>
     <tr class="why"><td colspan="8">{{ r.reasons }}</td></tr>
     {% endfor %}
   </table></div>
@@ -19,19 +19,20 @@
 tr.why td{border-bottom:1px solid var(--line);color:var(--muted);font-size:12.5px;text-align:left!important;padding-top:0;white-space:normal}
 tr.why + tr td{border-top:0}
 table.t tr:not(.why) td{border-bottom:0}
-.switch a{padding:6px 14px;border:1px solid var(--line);border-radius:16px;text-decoration:none;background:var(--card);margin-right:6px}
-.switch a.on{background:var(--brand);color:#fff;border-color:var(--brand)}
-.regime{font-size:28px;font-weight:700}
+.regime{font-size:30px}
+.mascot{font-size:64px;line-height:1;filter:drop-shadow(0 6px 10px rgba(139,124,246,.25));animation:bob 3s ease-in-out infinite}
+.regime-head{display:flex;gap:18px;align-items:center}
+.list-title{display:flex;align-items:center;gap:8px}
 .regime.good{color:var(--good)}.regime.bad{color:var(--bad)}.regime.warn{color:var(--warn)}
 details summary{cursor:pointer;color:var(--brand);font-weight:600}
 </style>
-<header><h1>{{ cfg.label }}大盤總覽</h1><small>資料日期 {{ as_of or '—' }}｜掃描 {{ rows|length }} 檔大型股</small></header>
-<p class="switch" style="margin-top:14px">{% for k, v in markets.items() %}<a href="/market?market={{ k }}" class="{{ 'on' if k == market }}">{{ v.label }}</a>{% endfor %}</p>
-{% if errors %}<details class="note warn"><summary>{{ errors|length }} 檔資料更新失敗（使用快取）</summary>{{ errors|join('；') }}</details>{% endif %}
+<header><h1>{{ '🧋' if market == 'TW' else '🍔' }} {{ cfg.label }}大盤總覽</h1><small>資料日期 {{ as_of or '—' }}｜掃描 {{ rows|length }} 檔大型股</small></header>
+{% if errors %}<details class="note warn"><summary style="display:inline">{{ errors|length }} 檔資料更新失敗（使用快取）</summary>{{ errors|join('；') }}</details>{% endif %}
 
 <div class="panel">
-  <h2>市場狀態：<span class="regime {{ reg.regime_level }}">{{ reg.regime }}</span></h2>
-  <p>{{ reg.regime_text }}</p>
+  <div class="regime-head"><div class="mascot">{{ reg.regime_emoji }}</div>
+    <div><h2 style="margin:0">市場狀態：<span class="regime {{ reg.regime_level }}">{{ reg.regime }}</span></h2>
+    <p style="margin:4px 0 0">{{ reg.regime_text }}</p></div></div>
   <div class="cards">
     {% if reg.index_close is defined %}
     <div class="card"><span>{{ cfg.index_label }}</span><strong>{{ reg.index_close|num(0) }}</strong><small>1 月 {{ reg.index_ret_1m|spct }}｜3 月 {{ reg.index_ret_3m|spct }}</small></div>
@@ -46,19 +47,19 @@ details summary{cursor:pointer;color:var(--brand);font-weight:600}
 {% if charts.regime %}<div class="chart">{{ charts.regime|safe }}</div>{% endif %}
 
 <div class="grid2">
-  <div class="panel"><h2 style="color:#c0392b">▲ 訊號偏多（趨勢＋動能都強）</h2>
+  <div class="panel"><h2 class="list-title">🚀 訊號偏多 <span class="pill bull">趨勢＋動能都強</span></h2>
     <p class="hint">站上 200 日線、50 日線在 200 日線之上、綜合分數 ≥ 65，且未過熱。</p>
     {{ stock_table(groups.bull, '目前沒有符合條件的股票。') }}</div>
-  <div class="panel"><h2 style="color:#16834b">▼ 訊號偏空（趨勢＋動能都弱）</h2>
+  <div class="panel"><h2 class="list-title">🌧️ 訊號偏空 <span class="pill bear">趨勢＋動能都弱</span></h2>
     <p class="hint">跌破 200 日線、50 日線在 200 日線之下、綜合分數 ≤ 35。持有中的部位可檢查是否符合自己的停損 / 減碼條件。</p>
     {{ stock_table(groups.bear, '目前沒有符合條件的股票。') }}</div>
 </div>
-<div class="panel"><h2 style="color:#a46a00">⚠ 過熱（趨勢向上但短期漲多）</h2>
+<div class="panel"><h2 class="list-title">🌶️ 過熱 <span class="pill hot">趨勢向上但短期漲多</span></h2>
   <p class="hint">RSI ≥ 75 或股價高於 50 日線 15% 以上。趨勢仍好，但追高的風險報酬比較差，常見做法是等回檔。</p>
   {{ stock_table(groups.hot, '目前沒有過熱的股票。') }}</div>
 
 <div class="panel">
-  <h2>這套規則過去有沒有用？</h2>
+  <h2>🔬 這套規則過去有沒有用？</h2>
   {% if val %}
   <p class="hint">回測：每 21 個交易日，買進當時「偏多」名單中分數最高的 {{ val.top_n }} 檔（不足的格子放現金），扣除交易成本，對照「名單內全部股票等權重」與{{ cfg.index_label }}。</p>
   <div class="scroll"><table class="t">
@@ -82,14 +83,14 @@ details summary{cursor:pointer;color:var(--brand);font-weight:600}
 {% if charts.validate %}<div class="chart">{{ charts.validate|safe }}</div>{% endif %}
 
 <div class="panel">
-  <details><summary>全部 {{ rows|length }} 檔排名</summary>
+  <details><summary>📋 全部 {{ rows|length }} 檔排名</summary>
   <div class="scroll" style="max-height:none"><table class="t">
     <tr><th>代號</th><th>訊號</th><th>收盤</th><th>今日</th><th>1 月</th><th>3 月</th><th>12-1 月</th><th>RSI</th><th>波動</th><th>分數</th></tr>
-    {% for r in rows %}<tr><td><a href="/dashboard?symbol={{ r.symbol|urlencode }}">{{ r.symbol }}</a></td><td>{{ r.signal_label }}</td><td>{{ r.close|num }}</td><td>{{ r.ret_1d|spct }}</td><td>{{ r.ret_1m|spct }}</td><td>{{ r.ret_3m|spct }}</td><td>{{ r.mom_12_1|spct }}</td><td>{{ r.rsi|num(0) }}</td><td>{{ r.vol_60|pct(0) }}</td><td>{{ r.score|num(0) }}</td></tr>{% endfor %}
+    {% for r in rows %}<tr><td><a href="/dashboard?symbol={{ r.symbol|urlencode }}">{{ r.symbol }}</a></td><td><span class="pill {{ r.signal }}">{{ r.signal_label }}</span></td><td>{{ r.close|num }}</td><td>{{ r.ret_1d|spct }}</td><td>{{ r.ret_1m|spct }}</td><td>{{ r.ret_3m|spct }}</td><td>{{ r.mom_12_1|spct }}</td><td>{{ r.rsi|num(0) }}</td><td>{{ r.vol_60|pct(0) }}</td><td>{{ r.score|num(0) }}</td></tr>{% endfor %}
   </table></div></details>
 </div>
 
-<div class="panel"><h2>分數怎麼算？</h2>
+<div class="panel"><h2>🧮 分數怎麼算？</h2>
   <p>綜合分數 0～100，是和同市場其他股票比較的<b>相對排名</b>：12-1 月動能 35%、3 個月報酬 25%、趨勢（是否站上 200 日線、50 日線是否在 200 日線上）25%、低波動 15%。
   「12-1 月動能」是過去 12 個月扣掉最近 1 個月的報酬，是學術上研究最久的動能指標之一。</p>
   <p><b>這不是買賣建議。</b>規則只看價格，不看財報、估值與消息；「偏多」代表目前趨勢強，不代表明天會漲。詳見 <a href="/guide">教學「大盤總覽」一節</a>。</p>

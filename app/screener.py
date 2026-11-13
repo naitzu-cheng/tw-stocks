@@ -132,13 +132,13 @@ def regime(index_close: pd.Series, closes: pd.DataFrame):
         above = out["breadth200"] >= 0.5
     b = out["breadth200"]
     if above and b >= 0.55:
-        out["regime"], out["regime_level"] = "多頭", "good"
+        out["regime"], out["regime_level"], out["regime_emoji"] = "多頭", "good", "🐮"
         out["regime_text"] = "大盤在 200 日線之上、多數個股也在長期趨勢之上。趨勢型訊號在這種環境下歷史表現較好。"
     elif not above and b <= 0.45:
-        out["regime"], out["regime_level"] = "空頭", "bad"
+        out["regime"], out["regime_level"], out["regime_emoji"] = "空頭", "bad", "🐻"
         out["regime_text"] = "大盤在 200 日線之下、多數個股走弱。這種環境下「偏多」名單也容易失靈，歷史上降低持股或分批是較保守的做法。"
     else:
-        out["regime"], out["regime_level"] = "震盪 / 轉折", "warn"
+        out["regime"], out["regime_level"], out["regime_emoji"] = "震盪 / 轉折", "warn", "🐢"
         out["regime_text"] = "大盤與個股方向不一致（例如指數靠少數權值股撐著）。訊號可靠度較低，宜觀察廣度是否跟上。"
     return out
 

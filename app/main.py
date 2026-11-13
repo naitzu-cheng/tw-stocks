@@ -15,6 +15,7 @@ import plotly.graph_objs as go
 import plotly.io as pio
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from urllib.parse import quote, urlparse
 from fastapi.templating import Jinja2Templates
 from plotly.subplots import make_subplots
 
@@ -22,7 +23,7 @@ from app.analysis import (Costs, MODEL_LABELS, build_analysis, ma_robustness,
                           walk_forward)
 from app.collector import ensure_fresh, ensure_fresh_many, fetch_and_store, get_data
 from app.features import atr
-from app.markets import normalize_symbol, profile_for
+from app.markets import is_taiwan, normalize_symbol, profile_for
 from app.portfolio import WEIGHTINGS, build_portfolio_analysis
 from app.screener import regime, screen, validate
 from app.universe import MARKETS
@@ -40,6 +41,9 @@ async def lifespan(_app):
 app = FastAPI(title="TW & US Stocks Quant Lab", lifespan=lifespan)
 
 PLOT_LAYOUT = dict(template="plotly_white", margin=dict(l=40, r=20, t=50, b=70),
+                   font=dict(family="Nunito, Huninn, PingFang TC, sans-serif", color="#3d3550"),
+                   paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                   colorway=["#8b7cf6", "#ff8fab", "#4cc9a6", "#ffb07c", "#6cb8ff", "#f5c84c"],
                    legend=dict(orientation="h", y=-0.06, yanchor="top", x=0))
 
 
@@ -115,6 +119,70 @@ def to_html(fig, first=False):
     return pio.to_html(fig, full_html=False, include_plotlyjs="cdn" if first else False,
                        config={"displaylogo": False, "responsive": True})
 
+
+
+# ---------------------------------------------------------------- market switch
+MARKET_DEFAULTS = {
+    "TW": {"symbol": "2330.TW", "portfolio": "2330.TW,2317.TW,2454.TW,0050.TW",
+           "chips": ["2330.TW", "2317.TW", "2454.TW", "2308.TW", "2881.TW", "0050.TW", "006208.TW", "00878.TW"]},
+    "US": {"symbol": "AAPL", "portfolio": "AAPL,MSFT,NVDA,SPY",
+           "chips": ["AAPL", "NVDA", "MSFT", "GOOGL", "AMZN", "TSLA", "SPY", "QQQ"]},
+}
+COOKIE_AGE = 365 * 24 * 3600
+
+
+def market_of(symbol):
+    return "TW" if is_taiwan(symbol) else "US"
+
+
+def current_market(request: Request):
+    value = (request.cookies.get("market") or "").upper()
+    return value if value in MARKET_DEFAULTS else "TW"
+
+
+def last_symbol(request: Request, market: str):
+    raw = request.cookies.get(f"last_{market}")
+    try:
+        sym = normalize_symbol(raw) if raw else None
+    except ValueError:
+        sym = None
+    if sym and market_of(sym) == market:
+        return sym
+    return MARKET_DEFAULTS[market]["symbol"]
+
+
+def page(request: Request, name: str, ctx: dict, market: str = None, symbol: str = None):
+    """Render a page with the shared navigation context and remember the market."""
+    market = market or current_market(request)
+    shown = symbol or last_symbol(request, market)
+    resp = templates.TemplateResponse(request, name, {
+        "mkt": market, "path": request.url.path, "nav_symbol": shown,
+        "chips": MARKET_DEFAULTS[market]["chips"], **ctx})
+    resp.set_cookie("market", market, max_age=COOKIE_AGE, samesite="lax")
+    if symbol:
+        resp.set_cookie(f"last_{market_of(symbol)}", symbol, max_age=COOKIE_AGE, samesite="lax")
+    return resp
+
+
+@app.get("/switch-market")
+def switch_market(request: Request, to: str = "TW", next: str = "/market"):
+    to = to.upper()
+    if to not in MARKET_DEFAULTS:
+        raise HTTPException(status_code=400, detail="to 必須是 TW 或 US")
+    path = urlparse(next).path or "/market"
+    if not path.startswith("/") or path.startswith("//"):
+        path = "/market"
+    if path in ("/dashboard", "/risk-dashboard"):
+        url = f"{path}?symbol={quote(last_symbol(request, to))}"
+    elif path in ("/market", "/"):
+        url = f"/market?market={to}"
+    elif path == "/portfolio":
+        url = "/portfolio"
+    else:
+        url = path
+    resp = RedirectResponse(url, status_code=303)
+    resp.set_cookie("market", to, max_age=COOKIE_AGE, samesite="lax")
+    return resp
 
 # ---------------------------------------------------------------- JSON API
 @app.get("/")
@@ -235,12 +303,12 @@ def risk(symbol: str = "2330.TW", capital: float = 1_000_000, risk_per_trade: fl
 
 # ---------------------------------------------------------------- HTML pages
 @app.get("/dashboard", response_class=HTMLResponse)
-def dashboard(request: Request, symbol: str = "2330.TW", fast_window: int = 20,
+def dashboard(request: Request, symbol: Optional[str] = None, fast_window: int = 20,
               slow_window: int = 60, fee_rate: Optional[float] = None,
               tax_rate: Optional[float] = None, slippage_rate: Optional[float] = None,
               model_name: str = "logistic", horizon: int = 5, step: int = 63,
               band: float = 0.02, compare: bool = False):
-    symbol, refresh_error = resolve(symbol)
+    symbol, refresh_error = resolve(symbol or last_symbol(request, current_market(request)))
     profile, costs = costs_for(symbol, fee_rate, tax_rate, slippage_rate)
     df = load_prices(symbol)
     bench = benchmark_close(symbol)
@@ -260,7 +328,7 @@ def dashboard(request: Request, symbol: str = "2330.TW", fast_window: int = 20,
     if robust:
         charts["heatmap"] = to_html(heatmap_figure(robust))
 
-    return templates.TemplateResponse(request, "dashboard.html", {
+    return page(request, "dashboard.html", {
         "symbol": symbol, "profile": profile, "costs": costs,
         "params": {"fast_window": fast_window, "slow_window": slow_window,
                    "fee_rate": fee_rate, "tax_rate": tax_rate, "slippage_rate": slippage_rate,
@@ -271,7 +339,7 @@ def dashboard(request: Request, symbol: str = "2330.TW", fast_window: int = 20,
         "errors": errors, "refresh_error": refresh_error,
         "latest_close": float(df["Close"].iloc[-1]),
         "latest_date": df.index[-1].strftime("%Y-%m-%d"),
-    })
+    }, market=market_of(symbol), symbol=symbol)
 
 
 @app.get("/dashboard/ml")
@@ -296,13 +364,13 @@ def price_figure(bt, trades):
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.6, 0.2, 0.2],
                         vertical_spacing=0.03)
     fig.add_trace(go.Candlestick(x=bt.index, open=bt["Open"], high=bt["High"], low=bt["Low"],
-                                 close=bt["Close"], name="K 線", increasing_line_color="#d33",
-                                 decreasing_line_color="#1a8f4c"), 1, 1)
+                                 close=bt["Close"], name="K 線", increasing_line_color="#f2557a",
+                                 decreasing_line_color="#1fa776"), 1, 1)
     fig.add_trace(go.Scatter(x=bt.index, y=bt["fast_ma"], name="短均線",
-                             line=dict(width=1.2, color="#e08a00")), 1, 1)
+                             line=dict(width=1.2, color="#ffb07c")), 1, 1)
     fig.add_trace(go.Scatter(x=bt.index, y=bt["slow_ma"], name="長均線",
-                             line=dict(width=1.2, color="#3b6fd8")), 1, 1)
-    for action, color, marker in (("買入", "#d33", "triangle-up"), ("賣出", "#1a8f4c", "triangle-down")):
+                             line=dict(width=1.2, color="#6cb8ff")), 1, 1)
+    for action, color, marker in (("買入", "#f2557a", "triangle-up"), ("賣出", "#1fa776", "triangle-down")):
         pts = [t for t in trades if t["action"] == action]
         fig.add_trace(go.Scatter(x=[t["date"] for t in pts], y=[t["price"] for t in pts],
                                  mode="markers", name=action,
@@ -310,10 +378,10 @@ def price_figure(bt, trades):
                                              line=dict(width=1, color="white"))), 1, 1)
     if "Volume" in bt:
         fig.add_trace(go.Bar(x=bt.index, y=bt["Volume"], name="成交量",
-                             marker_color="#9aa7b1", showlegend=False), 2, 1)
+                             marker_color="#d9d2ee", showlegend=False), 2, 1)
     from app.features import rsi
     fig.add_trace(go.Scatter(x=bt.index, y=rsi(bt["Close"]), name="RSI(14)",
-                             line=dict(color="#7a4fd0", width=1.2)), 3, 1)
+                             line=dict(color="#ff8fab", width=1.2)), 3, 1)
     for level in (30, 70):
         fig.add_hline(y=level, line=dict(dash="dot", color="#bbb", width=1), row=3, col=1)
     fig.update_layout(height=720, xaxis_rangeslider_visible=False, **PLOT_LAYOUT)
@@ -329,14 +397,14 @@ def strategy_figure(bt, bench):
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3],
                         vertical_spacing=0.05)
     fig.add_trace(go.Scatter(x=bt.index, y=bt["strategy_equity"], name="均線策略（扣成本）",
-                             line=dict(color="#0b6e69", width=2)), 1, 1)
+                             line=dict(color="#8b7cf6", width=2)), 1, 1)
     fig.add_trace(go.Scatter(x=bt.index, y=bt["buy_hold_equity"], name="買入持有",
-                             line=dict(color="#888", width=1.5)), 1, 1)
+                             line=dict(color="#b9b2c6", width=1.5)), 1, 1)
     if bench is not None:
         b = bench.reindex(bt.index).ffill()
         fig.add_trace(go.Scatter(x=bt.index, y=b / b.iloc[0], name="大盤基準",
-                                 line=dict(color="#c9a227", width=1.2, dash="dot")), 1, 1)
-    for col, name, color in (("strategy_equity", "策略回撤", "#0b6e69"),
+                                 line=dict(color="#f5b84c", width=1.2, dash="dot")), 1, 1)
+    for col, name, color in (("strategy_equity", "策略回撤", "#8b7cf6"),
                              ("buy_hold_equity", "持有回撤", "#888")):
         dd = bt[col] / bt[col].cummax() - 1
         fig.add_trace(go.Scatter(x=bt.index, y=dd, name=name, fill="tozeroy",
@@ -362,21 +430,22 @@ def model_figure(bt):
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.65, 0.35],
                         vertical_spacing=0.05)
     fig.add_trace(go.Scatter(x=bt.index, y=bt["strategy_equity"], name="模型策略（樣本外）",
-                             line=dict(color="#0b6e69", width=2)), 1, 1)
+                             line=dict(color="#8b7cf6", width=2)), 1, 1)
     fig.add_trace(go.Scatter(x=bt.index, y=bt["buy_hold_equity"], name="買入持有",
-                             line=dict(color="#888", width=1.5)), 1, 1)
+                             line=dict(color="#b9b2c6", width=1.5)), 1, 1)
     fig.add_trace(go.Scatter(x=bt.index, y=bt["probability"], name="預測上漲機率",
-                             line=dict(color="#7a4fd0", width=1)), 2, 1)
+                             line=dict(color="#ff8fab", width=1)), 2, 1)
     fig.add_trace(go.Scatter(x=bt.index, y=bt["threshold"], name="進場門檻",
-                             line=dict(color="#c33", width=1, dash="dot")), 2, 1)
+                             line=dict(color="#f2557a", width=1, dash="dot")), 2, 1)
     fig.update_yaxes(tickformat=".0%", row=2, col=1)
     fig.update_layout(height=560, title="Walk-forward 樣本外資產曲線", **PLOT_LAYOUT)
     return fig
 
 
 @app.get("/portfolio", response_class=HTMLResponse)
-def portfolio(request: Request, symbols: str = "2330.TW,0050.TW,AAPL,SPY",
+def portfolio(request: Request, symbols: Optional[str] = None,
               weighting: str = "inverse_vol", rebalance_days: int = 21):
+    symbols = symbols or MARKET_DEFAULTS[current_market(request)]["portfolio"]
     try:
         symbol_list = list(dict.fromkeys(normalize_symbol(s) for s in symbols.split(",") if s.strip()))
     except ValueError as e:
@@ -396,35 +465,39 @@ def portfolio(request: Request, symbols: str = "2330.TW,0050.TW,AAPL,SPY",
         raise HTTPException(status_code=400, detail=str(e))
     fig = go.Figure(go.Scatter(x=result["equity"].index, y=result["equity"],
                                name=result["metrics"]["weighting_label"],
-                               line=dict(color="#0b6e69", width=2)))
+                               line=dict(color="#8b7cf6", width=2)))
     fig.update_layout(height=460, title="投資組合資產曲線", **PLOT_LAYOUT)
     corr = result["correlation"]
     cfig = go.Figure(go.Heatmap(z=corr.values, x=list(corr.columns), y=list(corr.index),
                                 zmin=-1, zmax=1, colorscale="RdBu_r",
                                 text=np.round(corr.values, 2), texttemplate="%{text}"))
     cfig.update_layout(height=380, title="日報酬相關係數", **PLOT_LAYOUT)
-    return templates.TemplateResponse(request, "portfolio.html", {
+    markets_used = {market_of(s) for s in resolved}
+    return page(request, "portfolio.html", {
         "symbols": ",".join(resolved), "weighting": weighting, "weightings": WEIGHTINGS,
         "rebalance_days": rebalance_days, "m": result["metrics"],
         "per_stock": result["per_stock"], "errors": errors,
         "chart": to_html(fig, first=True), "corr_chart": to_html(cfig),
-    })
+    }, market=markets_used.pop() if len(markets_used) == 1 else None)
 
 
 @app.get("/risk-dashboard", response_class=HTMLResponse)
-def risk_dashboard(request: Request, symbol: str = "2330.TW", capital: float = 1_000_000,
+def risk_dashboard(request: Request, symbol: Optional[str] = None, capital: Optional[float] = None,
                    risk_per_trade: float = 0.01, stop_loss_pct: Optional[float] = None,
                    atr_multiple: float = 2.0):
+    symbol = symbol or last_symbol(request, current_market(request))
+    if capital is None:
+        capital = 1_000_000 if market_of(normalize_symbol(symbol)) == "TW" else 30_000
     r = risk(symbol, capital, risk_per_trade, stop_loss_pct, atr_multiple)
-    return templates.TemplateResponse(request, "risk.html", {"r": r, "symbol": r["symbol"],
-                                                             "stop_loss_input": stop_loss_pct})
+    return page(request, "risk.html", {"r": r, "symbol": r["symbol"], "stop_loss_input": stop_loss_pct},
+                market=market_of(r["symbol"]), symbol=r["symbol"])
 
 
 @app.get("/guide", response_class=HTMLResponse)
 def guide(request: Request):
     text = (ROOT / "docs" / "GUIDE.md").read_text(encoding="utf-8")
     html = markdown.markdown(text, extensions=["tables", "fenced_code", "toc"])
-    return templates.TemplateResponse(request, "guide.html", {"body": html, "symbol": "2330.TW"})
+    return page(request, "guide.html", {"body": html})
 
 
 def _pct(value, digits=1):
@@ -442,6 +515,7 @@ def _num(value, digits=2):
 templates.env.filters["pct"] = _pct
 templates.env.filters["spct"] = lambda v, d=1: ("+" if v is not None and v > 0 else "") + _pct(v, d)
 templates.env.filters["num"] = _num
+templates.env.filters["plain"] = lambda v: ("%.7f" % v).rstrip("0").rstrip(".") if v else "0"
 
 
 # ---------------------------------------------------------------- market summary
@@ -482,8 +556,8 @@ def market_json(market: str = "TW"):
 
 
 @app.get("/market", response_class=HTMLResponse)
-def market_page(request: Request, market: str = "TW"):
-    market = market.upper()
+def market_page(request: Request, market: Optional[str] = None):
+    market = (market or current_market(request)).upper()
     cfg, r, errors = market_summary(market)
     reg, table, val = r["regime"], r["screen"], r["validate"]
     charts = {}
@@ -491,12 +565,12 @@ def market_page(request: Request, market: str = "TW"):
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.65, 0.35],
                             vertical_spacing=0.06)
         fig.add_trace(go.Scatter(x=reg["index_history"].index, y=reg["index_history"],
-                                 name=cfg["index_label"], line=dict(color="#0b6e69", width=2)), 1, 1)
+                                 name=cfg["index_label"], line=dict(color="#8b7cf6", width=2)), 1, 1)
         fig.add_trace(go.Scatter(x=reg["index_ma200"].index, y=reg["index_ma200"],
-                                 name="200 日線", line=dict(color="#c9a227", width=1.5, dash="dot")), 1, 1)
+                                 name="200 日線", line=dict(color="#f5b84c", width=1.5, dash="dot")), 1, 1)
         bh = reg["breadth_history"]
         fig.add_trace(go.Scatter(x=bh.index, y=bh, name="站上 200 日線的比例",
-                                 fill="tozeroy", line=dict(color="#7a4fd0", width=1)), 2, 1)
+                                 fill="tozeroy", line=dict(color="#ff8fab", width=1)), 2, 1)
         fig.add_hline(y=0.5, line=dict(dash="dot", color="#999", width=1), row=2, col=1)
         fig.update_yaxes(tickformat=".0%", range=[0, 1], row=2, col=1)
         fig.update_layout(height=520, title="大盤與市場廣度", **PLOT_LAYOUT)
@@ -504,21 +578,21 @@ def market_page(request: Request, market: str = "TW"):
     if val:
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=val["strategy_equity"].index, y=val["strategy_equity"],
-                                 name=f"每月持有偏多前 {val['top_n']} 名", line=dict(color="#0b6e69", width=2)))
+                                 name=f"每月持有偏多前 {val['top_n']} 名", line=dict(color="#8b7cf6", width=2)))
         fig.add_trace(go.Scatter(x=val["universe_equity"].index, y=val["universe_equity"],
-                                 name="名單內全部等權重", line=dict(color="#888", width=1.5)))
+                                 name="名單內全部等權重", line=dict(color="#b9b2c6", width=1.5)))
         if "index_equity" in val:
             fig.add_trace(go.Scatter(x=val["index_equity"].index, y=val["index_equity"],
-                                     name=cfg["index_label"], line=dict(color="#c9a227", width=1.2, dash="dot")))
+                                     name=cfg["index_label"], line=dict(color="#f5b84c", width=1.2, dash="dot")))
         fig.update_layout(height=420, title="這套規則過去有沒有用？（含交易成本）", **PLOT_LAYOUT)
         charts["validate"] = to_html(fig, first="regime" not in charts)
     groups = {k: table[table["signal"] == k].to_dict(orient="records") for k in ("bull", "hot", "bear")}
-    return templates.TemplateResponse(request, "market.html", {
+    return page(request, "market.html", {
         "market": market, "cfg": cfg, "markets": MARKETS, "reg": reg, "val": val,
         "groups": groups, "rows": table.to_dict(orient="records"), "charts": charts,
-        "errors": errors, "symbol": "2330.TW" if market == "TW" else "AAPL",
+        "errors": errors,
         "as_of": reg.get("index_date"),
-    })
+    }, market=market)
 
 
 def _warm_markets():

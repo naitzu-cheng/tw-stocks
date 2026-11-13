@@ -1,5 +1,5 @@
 <div class="panel">
-    <h2>{{ ml.model_name }}：預測 {{ ml.horizon }} 日後漲跌</h2>
+    <h2>🤖 {{ ml.model_name }}：預測 {{ ml.horizon }} 日後漲跌</h2>
     <p class="hint">Walk-forward：每 {{ ml.step }} 個交易日用「當時以前」的資料重新訓練一次，共 {{ ml.n_folds }} 段，樣本外期間 {{ ml.oos_start }} 至 {{ ml.oos_end }}（{{ ml.test_observations }} 天）。
       訓練與測試之間保留 {{ ml.horizon }} 天空窗避免標籤洩漏。進場門檻 = 訓練期上漲比例 ± {{ ml.band|pct(0) }}，也就是模型必須比「永遠看多」更有把握才進場。</p>
     {% for level, text in ml.verdict %}<div class="note {{ level }}">{{ text }}</div>{% endfor %}
