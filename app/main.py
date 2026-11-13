@@ -40,6 +40,20 @@ async def lifespan(_app):
 
 app = FastAPI(title="TW & US Stocks Quant Lab", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def drop_empty_query_params(request: Request, call_next):
+    """HTML forms send blank inputs as `fee_rate=`; treat them as "not given"
+    so the default (e.g. the market's automatic cost) applies instead of a 422."""
+    raw = request.scope.get("query_string", b"")
+    if raw:
+        from urllib.parse import parse_qsl, urlencode as _enc
+        pairs = parse_qsl(raw.decode("latin-1"), keep_blank_values=True)
+        kept = [(k, v) for k, v in pairs if v.strip() != ""]
+        if len(kept) != len(pairs):
+            request.scope["query_string"] = _enc(kept).encode("latin-1")
+    return await call_next(request)
+
 PLOT_LAYOUT = dict(template="plotly_white", margin=dict(l=40, r=20, t=50, b=70),
                    font=dict(family="Nunito, Huninn, PingFang TC, sans-serif", color="#3d3550"),
                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",

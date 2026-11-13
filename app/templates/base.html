@@ -135,6 +135,17 @@ footer{margin-top:34px;text-align:center;color:var(--muted);font-size:13px}
   <a href="/docs">🧩 API</a>
 </nav>
 {% block body %}{% endblock %}
+<script>
+// Leave blank inputs out of the URL so the server uses its defaults.
+document.querySelectorAll('form[method="get"]').forEach(function (f) {
+  f.addEventListener('submit', function () {
+    f.querySelectorAll('input,select').forEach(function (el) {
+      if (el.name && el.value.trim() === '') el.disabled = true;
+    });
+    setTimeout(function () { f.querySelectorAll('[disabled]').forEach(function (el) { el.disabled = false; }); }, 0);
+  });
+});
+</script>
 <footer>🐣 歷史回測與教學用途，不構成投資建議。過去績效不代表未來結果。</footer>
 </body>
 </html>
