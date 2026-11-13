@@ -15,6 +15,7 @@ REFRESH_AFTER = timedelta(hours=6)
 
 _fetched_at = {}
 _lock = threading.Lock()
+_batch_lock = threading.Lock()
 
 
 def _download(symbol, period, interval):
@@ -23,6 +24,10 @@ def _download(symbol, period, interval):
     df = yf.Ticker(symbol).history(period=period, interval=interval, auto_adjust=True)
     if df is None or df.empty:
         return pd.DataFrame()
+    return _clean(df)
+
+
+def _clean(df):
     df = df[[c for c in PRICE_COLUMNS if c in df.columns]]
     df = df[df["Close"].notna() & (df["Close"] > 0)].copy()
     idx = pd.DatetimeIndex(df.index)
@@ -31,6 +36,60 @@ def _download(symbol, period, interval):
     df.index = idx.normalize()
     df.index.name = "date"
     return df[~df.index.duplicated(keep="last")].sort_index()
+
+
+def _download_many(symbols, period):
+    """One batched Yahoo request for many tickers (much faster than a loop)."""
+    raw = yf.download(symbols, period=period, interval="1d", auto_adjust=True,
+                      group_by="ticker", threads=True, progress=False)
+    out = {}
+    if raw is None or raw.empty:
+        return out
+    if isinstance(raw.columns, pd.MultiIndex):
+        for sym in symbols:
+            if sym in raw.columns.get_level_values(0):
+                df = raw[sym].dropna(how="all")
+                if not df.empty and "Close" in df:
+                    out[sym] = _clean(df)
+    elif len(symbols) == 1:
+        out[symbols[0]] = _clean(raw)
+    return {k: v for k, v in out.items() if not v.empty}
+
+
+def ensure_fresh_many(symbols, period=DEFAULT_PERIOD):
+    """Refresh every stale symbol with one batched download.
+
+    Symbols the batch misses are retried one by one. Returns a list of errors.
+    """
+    symbols = [normalize_symbol(s) for s in symbols]
+    now = datetime.now(timezone.utc)
+    with _lock:
+        stale = [s for s in symbols
+                 if not (_fetched_at.get(s) and now - _fetched_at[s] < REFRESH_AFTER)]
+    if not stale:
+        return []
+    errors = []
+    with _batch_lock:
+        try:
+            got = _download_many(stale, period)
+        except Exception as exc:
+            got, errors = {}, [f"批次下載失敗：{exc}"]
+        for sym in stale:
+            df = got.get(sym)
+            if df is None:
+                try:
+                    df = _download(sym, period, "1d")
+                except Exception as exc:
+                    errors.append(f"{sym}：{exc}")
+                    continue
+            if df is None or df.empty:
+                if not has_data(sym):
+                    errors.append(f"{sym}：查無資料")
+                continue
+            store(sym, df)
+            with _lock:
+                _fetched_at[sym] = datetime.now(timezone.utc)
+    return errors
 
 
 def store(symbol, df):

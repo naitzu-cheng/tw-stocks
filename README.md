@@ -39,7 +39,9 @@ pytest -q
 
 | 路徑 | 說明 |
 |---|---|
-| `GET /dashboard?symbol=2330` | 研究室：總覽、K 線＋均線＋RSI、均線回測、參數穩健度、walk-forward 機器學習 |
+| `GET /market?market=TW`（或 `US`） | 大盤總覽：市場狀態、市場廣度、偏多 / 偏空 / 過熱名單、規則回測（首頁） |
+| `GET /market.json?market=US` | 同上（JSON） |
+| `GET /dashboard?symbol=2330` | 個股研究室：總覽、K 線＋均線＋RSI、均線回測、參數穩健度、walk-forward 機器學習（點開分頁才計算） |
 | `GET /portfolio?symbols=2330,0050,AAPL,SPY&weighting=inverse_vol` | 投資組合（等權重或風險平價、定期再平衡、風險貢獻） |
 | `GET /risk-dashboard?symbol=2330` | ATR 停損與部位大小 |
 | `GET /guide` | 分析方法教學 |
@@ -62,6 +64,8 @@ app/
   metrics.py    Sharpe/Sortino/Calmar/回撤/Beta/Alpha、PSR、Deflated Sharpe
   analysis.py   回測引擎、均線策略、參數穩健度、walk-forward 模型
   portfolio.py  投資組合
+  screener.py   大盤總覽：市場狀態、廣度、趨勢＋動能評分、規則回測
+  universe.py   大盤總覽掃描的台股 / 美股名單（可自行修改）
   main.py       FastAPI 路由與圖表
   templates/    頁面
 docs/GUIDE.md   教學
@@ -77,6 +81,7 @@ tests/          單元與 API 測試（含「隨機資料不應有預測力」�
 並設定環境變數 `DATABASE_URL`。
 
 免費方案 CPU 很弱，勾選「比較三個模型」會明顯變慢；結果會在記憶體中快取 6 小時。
+啟動時會在背景預先抓取大盤總覽的資料（設定環境變數 `PREFETCH_MARKETS=0` 可關閉）。
 
 ---
 
