@@ -9,12 +9,12 @@ from conftest import make_prices
 
 @pytest.fixture
 def client(monkeypatch):
-    seeds = {"2330.TW": 1, "0050.TW": 2, "AAPL": 3, "SPY": 4, "6488.TWO": 5}
+    seeds = {"2330.TW": 1, "0050.TW": 2, "AAPL": 3, "SPY": 4, "6488.TWO": 5, "MU": 6}
 
     def fake_download(symbol, period, interval):
-        if symbol not in seeds:
-            return pd.DataFrame()
-        return make_prices(1300, seed=seeds[symbol])
+        if symbol.startswith("ZZZZ") or symbol == "6488.TW":
+            return pd.DataFrame()           # unknown ticker / not listed on TWSE
+        return make_prices(1300, seed=seeds.get(symbol, sum(map(ord, symbol))))
 
     monkeypatch.setattr(collector, "_download", fake_download)
     collector._fetched_at.clear()
@@ -60,3 +60,16 @@ def test_bad_input(client):
     assert client.get("/analysis?symbol=2330&fast_window=60&slow_window=20").status_code == 400
     assert client.get("/analysis?symbol=bad;drop").status_code == 400
     assert client.get("/analysis?symbol=ZZZZ").status_code == 404
+
+
+@pytest.mark.parametrize("url", [
+    # Exactly what the dashboard form sends when the cost boxes are left blank.
+    "/dashboard?symbol=MU&fast_window=20&slow_window=60&fee_rate=&tax_rate=&slippage_rate=&model_name=logistic&horizon=5&step=63",
+    "/dashboard/ml?symbol=AAPL&fee_rate=&tax_rate=&slippage_rate=&fast_window=",
+    "/risk-dashboard?symbol=AAPL&capital=&risk_per_trade=0.01&atr_multiple=2&stop_loss_pct=",
+    "/portfolio?symbols=&weighting=inverse_vol&rebalance_days=",
+    "/analysis?symbol=2330&fee_rate=",
+])
+def test_blank_form_fields_use_defaults(client, url):
+    r = client.get(url)
+    assert r.status_code == 200, r.text[:300]
